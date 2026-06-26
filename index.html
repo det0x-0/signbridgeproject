@@ -1,0 +1,713 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no"/>
+<title>SignBridge — Sign ↔ Speak</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Syne:wght@400;700;800&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#05080f;--s1:#0b1018;--s2:#111824;--s3:#1a2233;
+  --border:#1e2a3a;--border2:#283548;
+  --accent:#00f5d4;--accent-dim:#007a6e;--accent2:#ff4d6d;--accent3:#7c6cff;
+  --text:#d8e8f8;--dim:#4a5e78;--dim2:#7a8ea8;
+  --mono:'JetBrains Mono',monospace;--sans:'Syne',sans-serif;
+  --rad:5px;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
+html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--sans);overflow:hidden;}
+body::after{content:'';position:fixed;inset:0;pointer-events:none;z-index:9999;
+  background:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,.04) 2px,rgba(0,0,0,.04) 4px);}
+
+.app{display:flex;flex-direction:column;height:100dvh;}
+
+header{flex-shrink:0;display:flex;align-items:center;padding:8px 14px;
+  background:var(--s1);border-bottom:1px solid var(--border);gap:10px;}
+.logo{font-family:var(--sans);font-weight:800;font-size:1.1rem;letter-spacing:-.01em;white-space:nowrap;}
+.logo em{color:var(--accent);font-style:normal;}
+.logo small{font-size:.55rem;font-weight:400;color:var(--dim);letter-spacing:.1em;text-transform:uppercase;margin-left:6px;font-family:var(--mono);}
+.hdr-spacer{flex:1;}
+.conn-pill{display:flex;align-items:center;gap:5px;padding:3px 9px;border-radius:20px;
+  background:var(--s2);border:1px solid var(--border);font-family:var(--mono);font-size:.58rem;color:var(--dim);}
+.conn-dot{width:6px;height:6px;border-radius:50%;background:var(--dim);transition:all .3s;}
+.conn-dot.live{background:var(--accent);box-shadow:0 0 6px var(--accent);animation:pulse 2s infinite;}
+.conn-dot.err{background:var(--accent2);}
+
+.tabs{flex-shrink:0;display:flex;background:var(--s1);border-bottom:1px solid var(--border);}
+.tab{flex:1;padding:10px 6px;font-family:var(--mono);font-size:.6rem;letter-spacing:.08em;text-transform:uppercase;
+  text-align:center;cursor:pointer;border:none;background:transparent;color:var(--dim);
+  border-bottom:2px solid transparent;transition:all .2s;outline:none;}
+.tab.active{color:var(--accent);border-bottom-color:var(--accent);background:var(--s2);}
+.tab:hover:not(.active){color:var(--text);background:var(--s2);}
+
+.panels{flex:1;overflow:hidden;}
+.panel{display:none;height:100%;flex-direction:column;}
+.panel.active{display:flex;}
+#mode1{flex-direction:row;}
+
+/* ── camera column ── */
+.cam-col{flex:1;display:flex;flex-direction:column;min-width:0;background:#000;overflow:hidden;}
+.feed-wrap{flex:1;position:relative;overflow:hidden;background:#000;}
+
+/* The canvas replaces the img — draws frames via JS for buttery smoothness */
+#feed-canvas{
+  position:absolute;inset:0;width:100%;height:100%;
+  /* mirror the image horizontally so it feels like looking in a mirror */
+  transform:scaleX(-1);
+  image-rendering:auto;
+}
+/* skeleton canvas sits on top, toggled */
+#skel-canvas{
+  position:absolute;inset:0;width:100%;height:100%;
+  transform:scaleX(-1);
+  display:none;
+}
+
+.hud{position:absolute;inset:0;pointer-events:none;z-index:10;}
+.hud-topleft{position:absolute;top:10px;right:10px;display:flex;flex-direction:column;gap:5px;align-items:flex-end;}
+.live-badge{display:inline-flex;align-items:center;gap:5px;
+  background:rgba(0,0,0,.82);border:1px solid var(--accent);border-radius:3px;
+  padding:3px 9px;font-family:var(--mono);font-size:.78rem;color:var(--accent);}
+.live-dot{width:6px;height:6px;border-radius:50%;background:var(--accent);animation:pulse 1.4s infinite;}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.2}}
+.mode-badge{background:rgba(0,0,0,.8);border:1px solid var(--border);border-radius:3px;
+  padding:2px 8px;font-family:var(--mono);font-size:.6rem;color:var(--dim);}
+
+/* cooldown ring indicator */
+.cooldown-ring{position:absolute;top:10px;left:10px;width:36px;height:36px;pointer-events:none;}
+.cooldown-ring svg{width:36px;height:36px;transform:rotate(-90deg);}
+.ring-bg{fill:none;stroke:var(--border);stroke-width:3;}
+.ring-fill{fill:none;stroke:var(--accent2);stroke-width:3;stroke-dasharray:100;stroke-dashoffset:100;
+  stroke-linecap:round;transition:stroke-dashoffset .05s linear;}
+
+/* confidence bar at bottom edge */
+.conf-bar{position:absolute;bottom:52px;left:0;right:0;height:3px;background:transparent;z-index:11;}
+.conf-fill{height:100%;background:var(--accent);transition:width .08s;width:0%;border-radius:0 2px 2px 0;}
+
+.sentence-overlay{position:absolute;bottom:0;left:0;right:0;
+  padding:24px 10px 8px;min-height:52px;
+  background:linear-gradient(transparent,rgba(2,5,12,.94));
+  display:flex;align-items:flex-end;flex-wrap:wrap;gap:5px;z-index:11;}
+.chip{font-family:var(--mono);font-size:.8rem;
+  background:rgba(0,245,212,.1);border:1px solid rgba(0,245,212,.3);
+  color:var(--accent);padding:3px 9px;border-radius:3px;animation:chipIn .15s ease-out;}
+.chip.spell{background:rgba(255,77,109,.1);border-color:rgba(255,77,109,.3);color:var(--accent2);}
+@keyframes chipIn{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:translateY(0)}}
+
+.ctrl-bar{flex-shrink:0;display:flex;align-items:center;gap:6px;
+  padding:8px 10px;background:var(--s1);border-top:1px solid var(--border);flex-wrap:wrap;}
+.btn{font-family:var(--mono);font-size:.6rem;letter-spacing:.06em;text-transform:uppercase;
+  padding:7px 11px;border-radius:var(--rad);border:1px solid var(--border);
+  background:var(--s2);color:var(--text);cursor:pointer;transition:all .15s;outline:none;white-space:nowrap;}
+.btn:hover{border-color:var(--accent);color:var(--accent);}
+.btn.danger{border-color:rgba(255,77,109,.4);color:var(--accent2);}
+.btn.danger:hover{background:rgba(255,77,109,.08);border-color:var(--accent2);}
+.btn.active-toggle{background:rgba(0,245,212,.08);border-color:var(--accent);color:var(--accent);}
+.btn.recording{background:rgba(255,77,109,.12);border-color:var(--accent2);color:var(--accent2);animation:pulse 1s infinite;}
+.btn.primary{background:var(--accent);color:#000;border-color:var(--accent);font-weight:700;}
+.btn.primary:hover{background:#00d8bc;}
+.spell-display{font-family:var(--mono);font-size:.65rem;color:var(--dim);margin-left:auto;white-space:nowrap;}
+.spell-display span{color:var(--accent2);font-weight:700;letter-spacing:.1em;}
+
+/* ── stats sidebar ── */
+.stats-col{width:230px;flex-shrink:0;display:flex;flex-direction:column;
+  background:var(--s1);border-left:1px solid var(--border);overflow:hidden;}
+.stats-section{padding:11px 12px;border-bottom:1px solid var(--border);}
+.stats-lbl{font-family:var(--mono);font-size:.55rem;letter-spacing:.12em;text-transform:uppercase;color:var(--dim);margin-bottom:7px;}
+#conf-wave{display:block;width:100%;height:44px;}
+.top3-row{display:flex;flex-direction:column;gap:6px;}
+.top3-item{display:flex;flex-direction:column;gap:2px;}
+.top3-header{display:flex;justify-content:space-between;align-items:baseline;}
+.top3-label{font-family:var(--mono);font-size:.72rem;color:var(--text);}
+.top3-pct{font-family:var(--mono);font-size:.6rem;color:var(--dim);}
+.top3-track{height:4px;background:var(--s3);border-radius:2px;overflow:hidden;}
+.top3-fill{height:100%;border-radius:2px;transition:width .15s ease-out;}
+.top3-fill.rank0{background:var(--accent);}
+.top3-fill.rank1{background:var(--accent3);}
+.top3-fill.rank2{background:var(--dim);}
+.corrected-box{font-family:var(--sans);font-size:.85rem;line-height:1.5;color:var(--text);min-height:42px;padding:4px 2px;}
+.corrected-box .raw{font-size:.68rem;color:var(--dim);margin-top:4px;font-family:var(--mono);}
+.nlp-status{font-family:var(--mono);font-size:.56rem;color:var(--dim);display:flex;align-items:center;gap:5px;margin-top:5px;}
+.nlp-spinner{width:8px;height:8px;border:1.5px solid var(--accent-dim);border-top-color:var(--accent);border-radius:50%;animation:spin .6s linear infinite;flex-shrink:0;}
+@keyframes spin{to{transform:rotate(360deg)}}
+.nlp-done{color:var(--accent);}
+.history-list{flex:1;overflow-y:auto;display:flex;flex-direction:column;}
+.h-entry{padding:7px 12px;border-bottom:1px solid var(--border);display:flex;flex-direction:column;gap:2px;}
+.h-word{font-family:var(--mono);font-size:.75rem;color:var(--accent);}
+.h-sentence{font-size:.72rem;color:var(--dim2);line-height:1.3;}
+.h-time{font-family:var(--mono);font-size:.55rem;color:var(--dim);}
+.history-list::-webkit-scrollbar{width:3px;}
+.history-list::-webkit-scrollbar-thumb{background:var(--border2);border-radius:2px;}
+
+/* ── mode 2 ── */
+#mode2{padding:14px;gap:12px;overflow-y:auto;}
+#mode2::-webkit-scrollbar{width:4px;}
+#mode2::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px;}
+.lbl{font-family:var(--mono);font-size:.6rem;letter-spacing:.1em;text-transform:uppercase;color:var(--dim);margin-bottom:7px;}
+.inp-row{display:flex;gap:8px;}
+#txt-inp{flex:1;background:var(--s2);border:1px solid var(--border);border-radius:var(--rad);
+  padding:10px 12px;font-family:var(--mono);font-size:.85rem;color:var(--text);outline:none;transition:border-color .2s;}
+#txt-inp:focus{border-color:var(--accent);}
+#txt-inp::placeholder{color:var(--dim);}
+.voice-strip{display:flex;align-items:center;gap:8px;padding:10px 12px;
+  background:var(--s2);border:1px solid var(--border);border-radius:var(--rad);}
+.voice-transcript{font-family:var(--mono);font-size:.75rem;color:var(--dim2);flex:1;min-height:18px;font-style:italic;}
+.voice-transcript.active{color:var(--text);font-style:normal;}
+.queue-row{display:flex;flex-wrap:wrap;gap:5px;min-height:22px;}
+.qchip{font-family:var(--mono);font-size:.65rem;padding:3px 8px;border-radius:3px;
+  background:var(--s2);border:1px solid var(--border);color:var(--dim);transition:all .2s;}
+.qchip.playing{background:rgba(0,245,212,.12);border-color:var(--accent);color:var(--accent);}
+.qchip.done{opacity:.22;}
+.vid-box{flex:1;background:#000;border-radius:var(--rad);border:1px solid var(--border);
+  overflow:hidden;position:relative;display:flex;align-items:center;justify-content:center;min-height:180px;}
+#asl-vid{width:100%;height:100%;object-fit:contain;display:none;}
+.vid-ph{display:flex;flex-direction:column;align-items:center;gap:8px;color:var(--dim);font-family:var(--mono);font-size:.7rem;}
+.vid-ph svg{opacity:.15;}
+.now-lbl{position:absolute;bottom:9px;left:9px;font-family:var(--mono);font-size:.78rem;
+  color:var(--accent);background:rgba(0,0,0,.8);padding:2px 8px;border-radius:3px;display:none;}
+.pdots{display:flex;gap:5px;justify-content:center;margin-top:2px;flex-wrap:wrap;}
+.pdot{width:5px;height:5px;border-radius:50%;background:var(--border);transition:all .2s;flex-shrink:0;}
+.pdot.cur{background:var(--accent);box-shadow:0 0 5px var(--accent);}
+.pdot.done{background:var(--dim);}
+
+#toast{position:fixed;bottom:14px;right:12px;background:var(--s1);
+  border:1px solid var(--border);border-left:3px solid var(--accent);
+  padding:8px 12px;font-family:var(--mono);font-size:.68rem;border-radius:var(--rad);
+  transform:translateY(12px);opacity:0;transition:all .25s;z-index:10000;max-width:260px;}
+#toast.show{transform:translateY(0);opacity:1;}
+#toast.err{border-left-color:var(--accent2);}
+
+@media(max-width:560px){.stats-col{display:none;}.logo small{display:none;}}
+</style>
+</head>
+<body>
+<div class="app">
+
+  <header>
+    <div class="logo">Sign<em>Bridge</em><small>v2</small></div>
+    <div class="hdr-spacer"></div>
+    <div class="conn-pill">
+      <div class="conn-dot" id="cdot"></div>
+      <span id="conn-txt">—</span>
+    </div>
+  </header>
+
+  <div class="tabs">
+    <button class="tab active" id="tab1" onclick="switchMode(1)">✋ Sign → Speech</button>
+    <button class="tab"        id="tab2" onclick="switchMode(2)">🎤 Speech → Sign</button>
+  </div>
+
+  <div class="panels">
+
+    <!-- Tab 1 -->
+    <div class="panel active" id="mode1">
+
+      <div class="cam-col">
+        <div class="feed-wrap" id="feed-wrap">
+          <!-- Canvas-based feed: buttery smooth, no MJPEG lag -->
+          <canvas id="feed-canvas"></canvas>
+          <canvas id="skel-canvas"></canvas>
+
+          <div class="hud">
+            <!-- Cooldown ring top-left -->
+            <div class="cooldown-ring">
+              <svg viewBox="0 0 36 36">
+                <circle class="ring-bg" cx="18" cy="18" r="15.9"/>
+                <circle class="ring-fill" id="ring-fill" cx="18" cy="18" r="15.9"/>
+              </svg>
+            </div>
+            <!-- Live label top-right (mirror-flipped) -->
+            <div class="hud-topleft">
+              <div class="live-badge">
+                <span class="live-dot"></span>
+                <span id="live-label">— —</span>
+              </div>
+              <div class="mode-badge" id="view-badge">VIDEO</div>
+            </div>
+          </div>
+
+          <div class="conf-bar"><div class="conf-fill" id="conf-fill"></div></div>
+          <div class="sentence-overlay" id="sent-overlay"></div>
+        </div>
+
+        <div class="ctrl-bar">
+          <button class="btn danger" onclick="doReset()">Reset</button>
+          <button class="btn"        onclick="doFlush()">End Word</button>
+          <button class="btn" id="btn-skeleton" onclick="toggleSkeleton()">☠ Skeleton</button>
+          <button class="btn" onclick="speakSentence()">🔊 Speak</button>
+          <div class="spell-display">Spelling: <span id="spell-disp">—</span></div>
+        </div>
+      </div>
+
+      <div class="stats-col">
+        <div class="stats-section">
+          <div class="stats-lbl">Confidence</div>
+          <canvas id="conf-wave"></canvas>
+        </div>
+        <div class="stats-section">
+          <div class="stats-lbl">Top Predictions</div>
+          <div class="top3-row" id="top3-row">
+            <div class="top3-item">
+              <div class="top3-header"><span class="top3-label">—</span><span class="top3-pct">0%</span></div>
+              <div class="top3-track"><div class="top3-fill rank0" style="width:0%"></div></div>
+            </div>
+            <div class="top3-item">
+              <div class="top3-header"><span class="top3-label">—</span><span class="top3-pct">0%</span></div>
+              <div class="top3-track"><div class="top3-fill rank1" style="width:0%"></div></div>
+            </div>
+            <div class="top3-item">
+              <div class="top3-header"><span class="top3-label">—</span><span class="top3-pct">0%</span></div>
+              <div class="top3-track"><div class="top3-fill rank2" style="width:0%"></div></div>
+            </div>
+          </div>
+        </div>
+        <div class="stats-section">
+          <div class="stats-lbl">Smart Sentence ✨</div>
+          <div class="corrected-box" id="corrected-box">
+            <span style="color:var(--dim)">Detecting…</span>
+          </div>
+          <div class="nlp-status" id="nlp-status" style="display:none">
+            <div class="nlp-spinner"></div><span>Gemini thinking…</span>
+          </div>
+        </div>
+        <div class="stats-section" style="padding-bottom:4px;border-bottom:none;">
+          <div class="stats-lbl">History</div>
+        </div>
+        <div class="history-list" id="history-list"></div>
+      </div>
+
+    </div>
+
+    <!-- Tab 2 -->
+    <div class="panel" id="mode2">
+
+      <div>
+        <div class="lbl">Type a sentence → watch it signed</div>
+        <div class="inp-row">
+          <input id="txt-inp" type="text" placeholder="hello my name thanks"
+                 autocomplete="off" autocorrect="off" spellcheck="false"/>
+          <button class="btn primary" onclick="startPlayback()">▶ Play</button>
+        </div>
+      </div>
+
+      <div>
+        <div class="lbl">🎤 Live voice → sign (teammate speaks, signs appear)</div>
+        <div class="voice-strip">
+          <button class="btn" id="btn-voice" onclick="toggleVoice()">Start Listening</button>
+          <div class="voice-transcript" id="voice-transcript">Press Start and speak clearly…</div>
+        </div>
+      </div>
+
+      <div>
+        <div class="lbl">Queue</div>
+        <div class="queue-row" id="queue-row"></div>
+      </div>
+
+      <div class="vid-box">
+        <div class="vid-ph" id="vid-ph">
+          <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2">
+            <polygon points="5 3 19 12 5 21 5 3"/>
+          </svg>
+          <span>Awaiting playback</span>
+        </div>
+        <video id="asl-vid" playsinline></video>
+        <div class="now-lbl" id="now-lbl"></div>
+      </div>
+
+      <div class="pdots" id="pdots"></div>
+    </div>
+
+  </div>
+</div>
+<div id="toast"></div>
+
+<script>
+// ── State ─────────────────────────────────────────────────────────────────
+let evtSource    = null;
+let skeletonMode = false;
+let availVids    = {};
+let vidQueue     = [];
+let vidIdx       = 0;
+let lastSentence = [];
+let voiceActive  = false;
+let recognition  = null;
+
+const WAVE_LEN = 60;
+const waveData = new Array(WAVE_LEN).fill(0);
+
+// ── Canvas-based smooth video feed ───────────────────────────────────────
+// Instead of <img> with MJPEG (causes stutter), we use a hidden <img> as a
+// loader and draw each frame to a canvas via requestAnimationFrame.
+// This decouples network delivery from render timing = buttery smooth.
+
+const feedCanvas = document.getElementById('feed-canvas');
+const feedCtx    = feedCanvas.getContext('2d');
+const skelCanvas = document.getElementById('skel-canvas');
+const skelCtx    = skelCanvas.getContext('2d');
+
+const feedImg = new Image();
+const skelImg = new Image();
+
+let feedLoaded = false;
+let skelLoaded = false;
+
+function resizeCanvases() {
+  const wrap = document.getElementById('feed-wrap');
+  feedCanvas.width  = wrap.clientWidth;
+  feedCanvas.height = wrap.clientHeight;
+  skelCanvas.width  = wrap.clientWidth;
+  skelCanvas.height = wrap.clientHeight;
+}
+
+function drawFrame() {
+  requestAnimationFrame(drawFrame);
+  resizeIfNeeded();
+
+  const W = feedCanvas.width, H = feedCanvas.height;
+  const ctx = skeletonMode ? skelCtx : feedCtx;
+  const img = skeletonMode ? skelImg  : feedImg;
+
+  if (!img.complete || img.naturalWidth === 0) return;
+
+  // letterbox: fit the frame inside the canvas preserving aspect ratio
+  const iw = img.naturalWidth, ih = img.naturalHeight;
+  const scale = Math.min(W/iw, H/ih);
+  const dw = iw*scale, dh = ih*scale;
+  const dx = (W-dw)/2,  dy = (H-dh)/2;
+
+  ctx.clearRect(0,0,W,H);
+  ctx.drawImage(img, dx, dy, dw, dh);
+}
+
+let _lastW=0, _lastH=0;
+function resizeIfNeeded() {
+  const wrap = document.getElementById('feed-wrap');
+  if (!wrap) return;
+  if (wrap.clientWidth !== _lastW || wrap.clientHeight !== _lastH) {
+    _lastW = wrap.clientWidth; _lastH = wrap.clientHeight;
+    feedCanvas.width  = _lastW; feedCanvas.height = _lastH;
+    skelCanvas.width  = _lastW; skelCanvas.height = _lastH;
+  }
+}
+
+// Keep re-setting src to force MJPEG streaming into the img element
+// The img loads each MJPEG boundary as a new frame automatically
+feedImg.src = '/video_feed';
+skelImg.src  = '/skeleton_feed';
+
+requestAnimationFrame(drawFrame);
+
+// ── Skeleton toggle ───────────────────────────────────────────────────────
+function toggleSkeleton() {
+  skeletonMode = !skeletonMode;
+  feedCanvas.style.display = skeletonMode ? 'none' : 'block';
+  skelCanvas.style.display = skeletonMode ? 'block' : 'none';
+  document.getElementById('btn-skeleton').classList.toggle('active-toggle', skeletonMode);
+  document.getElementById('view-badge').textContent = skeletonMode ? 'SKELETON' : 'VIDEO';
+}
+
+// ── SSE ───────────────────────────────────────────────────────────────────
+function connectSSE() {
+  if (evtSource) evtSource.close();
+  evtSource = new EventSource('/prediction_stream');
+  evtSource.onopen    = () => setConn('live','LIVE');
+  evtSource.onmessage = e => { try { handlePred(JSON.parse(e.data)); } catch(_){} };
+  evtSource.onerror   = () => { setConn('err','RECONNECTING'); setTimeout(connectSSE,2000); };
+}
+
+// ── Cooldown ring ─────────────────────────────────────────────────────────
+const RING_CIRC = 2 * Math.PI * 15.9;   // circumference of r=15.9 circle
+function updateCooldownRing(frac) {
+  // frac: 1.0 = full cooldown, 0.0 = ready
+  const offset = RING_CIRC * (1 - frac);
+  document.getElementById('ring-fill').style.strokeDashoffset = offset;
+}
+
+// ── NLP helpers ───────────────────────────────────────────────────────────
+function showNlpProcessing() {
+  const ns = document.getElementById('nlp-status');
+  ns.style.display='flex';
+  ns.innerHTML='<div class="nlp-spinner"></div><span>Gemini thinking…</span>';
+}
+function showNlpDone(corrected) {
+  const ns = document.getElementById('nlp-status');
+  ns.innerHTML='<span class="nlp-done">✓ Done</span>';
+  setTimeout(()=>{ ns.style.display='none'; }, 3000);
+  document.getElementById('corrected-box').innerHTML=`<strong>${escHtml(corrected)}</strong>`;
+  // auto-speak the corrected sentence
+  speak(corrected);
+}
+
+// ── Main prediction handler ───────────────────────────────────────────────
+function handlePred(d) {
+  if (d.nlp_update) {
+    showNlpDone(d.corrected_sentence || d.raw || '');
+    return;
+  }
+
+  const ll = d.live_label ? `${d.live_label}  ${Math.round((d.confidence||0)*100)}%` : '— —';
+  document.getElementById('live-label').textContent = ll;
+  document.getElementById('conf-fill').style.width  = Math.round((d.confidence||0)*100)+'%';
+  document.getElementById('spell-disp').textContent = d.current_word || '—';
+
+  // cooldown ring
+  updateCooldownRing(d.cooldown_frac || 0);
+
+  renderSentence(d.sentence, d.current_word);
+
+  if (d.confirmed_word) showNlpProcessing();
+
+  if (d.corrected_sentence) {
+    document.getElementById('corrected-box').innerHTML=
+      `<strong>${escHtml(d.corrected_sentence)}</strong>`+
+      (d.sentence&&d.sentence.length
+        ?`<div class="raw">${escHtml((d.sentence||[]).join(' '))}</div>`:'');
+  }
+
+  waveData.push(d.confidence||0); waveData.shift(); drawWave();
+  if (d.top3&&d.top3.length) renderTop3(d.top3);
+  if (d.history&&d.history.length) renderHistory(d.history);
+
+  lastSentence = d.sentence || [];
+}
+
+// ── Render helpers ────────────────────────────────────────────────────────
+function renderSentence(words, partial) {
+  const ov = document.getElementById('sent-overlay');
+  ov.innerHTML='';
+  (words||[]).forEach(w=>{
+    const c=document.createElement('div'); c.className='chip'; c.textContent=w; ov.appendChild(c);
+  });
+  if (partial) {
+    const c=document.createElement('div'); c.className='chip spell'; c.textContent=partial+'…'; ov.appendChild(c);
+  }
+}
+
+function drawWave() {
+  const canvas=document.getElementById('conf-wave'); if(!canvas)return;
+  const dpr=window.devicePixelRatio||1;
+  const W=(canvas.parentElement.clientWidth||200)-24, H=44;
+  canvas.width=W*dpr; canvas.height=H*dpr;
+  canvas.style.width=W+'px'; canvas.style.height=H+'px';
+  const ctx=canvas.getContext('2d'); ctx.scale(dpr,dpr); ctx.clearRect(0,0,W,H);
+  const g=ctx.createLinearGradient(0,0,0,H);
+  g.addColorStop(0,'rgba(0,245,212,.25)'); g.addColorStop(1,'rgba(0,245,212,0)');
+  ctx.fillStyle=g; ctx.beginPath();
+  waveData.forEach((v,i)=>{
+    const x=(i/(WAVE_LEN-1))*W, y=H-v*(H-4)-2;
+    i===0?ctx.moveTo(x,H):undefined; ctx.lineTo(x,y);
+  });
+  ctx.lineTo(W,H); ctx.closePath(); ctx.fill();
+  ctx.strokeStyle='#00f5d4'; ctx.lineWidth=1.5; ctx.beginPath();
+  waveData.forEach((v,i)=>{
+    const x=(i/(WAVE_LEN-1))*W, y=H-v*(H-4)-2;
+    i===0?ctx.moveTo(x,y):ctx.lineTo(x,y);
+  });
+  ctx.stroke();
+}
+
+function renderTop3(top3) {
+  const items=document.getElementById('top3-row').querySelectorAll('.top3-item');
+  top3.forEach((t,i)=>{
+    if(!items[i])return;
+    items[i].querySelector('.top3-label').textContent=t.label;
+    items[i].querySelector('.top3-pct').textContent=Math.round(t.conf*100)+'%';
+    items[i].querySelector('.top3-fill').style.width=Math.round(t.conf*100)+'%';
+  });
+}
+
+function renderHistory(entries) {
+  const list=document.getElementById('history-list'); list.innerHTML='';
+  [...entries].reverse().forEach(e=>{
+    const div=document.createElement('div'); div.className='h-entry';
+    div.innerHTML=
+      `<div class="h-word">${escHtml(e.word)}</div>`+
+      `<div class="h-sentence">${escHtml(e.corrected||e.raw||'')}</div>`+
+      `<div class="h-time">${escHtml(e.time)}</div>`;
+    list.appendChild(div);
+  });
+}
+
+// ── Controls ──────────────────────────────────────────────────────────────
+async function doFlush() {
+  showNlpProcessing();
+  const r=await fetch('/flush_spelling',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+  const d=await r.json();
+  if(d.flushed){speak(d.flushed);renderSentence(d.sentence,'');}
+}
+
+async function doReset() {
+  await fetch('/reset',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+  document.getElementById('sent-overlay').innerHTML='';
+  document.getElementById('live-label').textContent='— —';
+  document.getElementById('spell-disp').textContent='—';
+  document.getElementById('conf-fill').style.width='0%';
+  document.getElementById('corrected-box').innerHTML='<span style="color:var(--dim)">Detecting…</span>';
+  document.getElementById('history-list').innerHTML='';
+  updateCooldownRing(0);
+  waveData.fill(0); drawWave();
+  toast('Session reset.');
+}
+
+function speakSentence() {
+  const smart=document.getElementById('corrected-box').querySelector('strong');
+  const txt=smart?smart.textContent:lastSentence.join(' ');
+  if(txt) speak(txt);
+}
+
+function speak(text) {
+  if(!window.speechSynthesis||!text) return;
+  speechSynthesis.cancel();
+  const u=new SpeechSynthesisUtterance(text);
+  u.rate=0.90; u.volume=1; u.pitch=1;
+  const voices=speechSynthesis.getVoices();
+  const pref=voices.find(v=>v.lang==='en-US'&&v.name.includes('Google'))
+           ||voices.find(v=>v.lang.startsWith('en'));
+  if(pref) u.voice=pref;
+  speechSynthesis.speak(u);
+}
+
+// ── Tab switch ────────────────────────────────────────────────────────────
+function switchMode(m) {
+  document.getElementById('tab1').classList.toggle('active',m===1);
+  document.getElementById('tab2').classList.toggle('active',m===2);
+  document.getElementById('mode1').classList.toggle('active',m===1);
+  document.getElementById('mode2').classList.toggle('active',m===2);
+  if(m===2) fetchVids();
+}
+
+// ── Voice recognition ─────────────────────────────────────────────────────
+function toggleVoice(){ voiceActive?stopVoice():startVoice(); }
+
+function startVoice() {
+  const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+  if(!SR){toast('Speech recognition not supported.',true);return;}
+  recognition=new SR();
+  recognition.lang='en-US';
+  recognition.interimResults=true;
+  recognition.continuous=true;
+
+  recognition.onresult=async(e)=>{
+    let interim='',final='';
+    for(let i=e.resultIndex;i<e.results.length;i++){
+      const t=e.results[i][0].transcript;
+      e.results[i].isFinal?final+=t:interim+=t;
+    }
+    const el=document.getElementById('voice-transcript');
+    el.textContent=final||interim;
+    el.classList.toggle('active',!!(final||interim));
+    if(final.trim()){
+      await fetchVids();
+      vidQueue=buildQueue(final.trim()); vidIdx=0;
+      renderQueueUI(); renderDots(); playNext();
+    }
+  };
+  recognition.onerror=(e)=>{ if(e.error!=='no-speech') toast('Voice error: '+e.error,true); };
+  recognition.onend=()=>{ if(voiceActive) recognition.start(); };
+  recognition.start();
+  voiceActive=true;
+  document.getElementById('btn-voice').textContent='⏹ Stop';
+  document.getElementById('btn-voice').classList.add('recording');
+  toast('Listening…');
+}
+
+function stopVoice() {
+  if(recognition) recognition.stop();
+  voiceActive=false;
+  document.getElementById('btn-voice').textContent='Start Listening';
+  document.getElementById('btn-voice').classList.remove('recording');
+  document.getElementById('voice-transcript').textContent='Press Start and speak clearly…';
+  document.getElementById('voice-transcript').classList.remove('active');
+}
+
+// ── Video playback ────────────────────────────────────────────────────────
+async function fetchVids() {
+  try{ const r=await fetch('/videos'); availVids=await r.json(); }
+  catch(_){ toast('Could not load video list.',true); }
+}
+
+function buildQueue(sentence) {
+  const tokens=[];
+  sentence.trim().toLowerCase().split(/\s+/).forEach(word=>{
+    if(!word)return;
+    if(availVids[word]) tokens.push({label:word,src:`/static/videos/${availVids[word]}`});
+    else [...word.toUpperCase()].forEach(ch=>{
+      const key=ch.toLowerCase();
+      tokens.push({label:ch,src:availVids[key]?`/static/videos/${availVids[key]}`:null});
+    });
+  });
+  return tokens;
+}
+
+async function startPlayback() {
+  await fetchVids();
+  const inp=document.getElementById('txt-inp').value.trim();
+  if(!inp){toast('Type something first.');return;}
+  vidQueue=buildQueue(inp); vidIdx=0;
+  renderQueueUI(); renderDots(); playNext();
+}
+
+function renderQueueUI() {
+  const row=document.getElementById('queue-row'); row.innerHTML='';
+  vidQueue.forEach((t,i)=>{
+    const c=document.createElement('div'); c.className='qchip'; c.id=`qc${i}`; c.textContent=t.label;
+    if(!t.src) c.style.opacity='.2'; row.appendChild(c);
+  });
+}
+function renderDots() {
+  const pd=document.getElementById('pdots'); pd.innerHTML='';
+  vidQueue.forEach((_,i)=>{
+    const d=document.createElement('div'); d.className='pdot'; d.id=`pd${i}`; pd.appendChild(d);
+  });
+}
+function updateQueueUI(idx) {
+  vidQueue.forEach((_,i)=>{
+    const c=document.getElementById(`qc${i}`),d=document.getElementById(`pd${i}`);
+    if(!c)return;
+    c.classList.remove('playing','done'); d.classList.remove('cur','done');
+    if(i<idx){c.classList.add('done');d.classList.add('done');}
+    else if(i===idx){c.classList.add('playing');d.classList.add('cur');}
+  });
+}
+function playNext() {
+  if(vidIdx>=vidQueue.length){
+    document.getElementById('now-lbl').style.display='none';
+    toast('Playback complete ✓'); return;
+  }
+  const tok=vidQueue[vidIdx]; updateQueueUI(vidIdx);
+  if(!tok.src){vidIdx++;playNext();return;}
+  const v=document.getElementById('asl-vid');
+  document.getElementById('vid-ph').style.display='none';
+  v.style.display='block';
+  const nl=document.getElementById('now-lbl'); nl.style.display='block'; nl.textContent=tok.label;
+  v.src=tok.src; v.load();
+  v.play().catch(()=>{vidIdx++;playNext();});
+  v.onended=()=>{vidIdx++;playNext();};
+  v.onerror=()=>{toast(`Missing: ${tok.label}`,true);vidIdx++;playNext();};
+}
+
+// ── Utilities ─────────────────────────────────────────────────────────────
+function setConn(cls,txt){
+  document.getElementById('cdot').className=`conn-dot ${cls}`;
+  document.getElementById('conn-txt').textContent=txt;
+}
+function escHtml(s){
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+let _tt;
+function toast(msg,err=false){
+  const el=document.getElementById('toast');
+  el.textContent=msg; el.className='show'+(err?' err':'');
+  clearTimeout(_tt); _tt=setTimeout(()=>el.classList.remove('show'),3000);
+}
+
+// ── Init ──────────────────────────────────────────────────────────────────
+document.getElementById('txt-inp').addEventListener('keydown',e=>{ if(e.key==='Enter') startPlayback(); });
+window.addEventListener('resize',()=>{ resizeIfNeeded(); drawWave(); });
+drawWave();
+connectSSE();
+if(window.speechSynthesis) speechSynthesis.getVoices();
+</script>
+</body>
+</html>
