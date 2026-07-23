@@ -37,7 +37,7 @@ def set_threshold(v):
     print(f"[THRESH] Updated to {_threshold:.2f}")
 
 # ── NLP via Gemini ─────────────────────────────────────────────────────────
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "AIzaSyDP_S6rn6C-nVx0WeAWGWJ6qq4NY2g7ktw")
+GEMINI_API_KEY = os.environ.get("SECRET_KEY")
 
 def fix_sentence(raw_words):
     if not raw_words:
